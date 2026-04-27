@@ -1,0 +1,5 @@
+gpu_type,system,total_cost_usd,total_requests
+A100,baseline,1.43065141,549
+A100,eagle3,0.84999233,549
+L4,baseline,1.49211437,549
+L4,eagle3,0.73702539,549
