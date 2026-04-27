@@ -1,4 +1,7 @@
 gpu_type,task,speculative_system,crossover_concurrency
-L4,code,eagle3,>32 (Never Crossed)
+A100,summarization,eagle3,>32 (Never Crossed)
+A100,code,eagle3,>32 (Never Crossed)
+A100,chat,eagle3,>32 (Never Crossed)
 L4,summarization,eagle3,>32 (Never Crossed)
+L4,code,eagle3,>32 (Never Crossed)
 L4,chat,eagle3,>32 (Never Crossed)
