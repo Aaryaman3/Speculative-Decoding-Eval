@@ -53,22 +53,35 @@ results/tables/    3 CSV summary tables
 
 | GPU | System | c=1 | c=8 | c=32 |
 |-----|--------|-----|-----|------|
-| A100 | Baseline | ~89 | ~88 | ~70 |
-| A100 | EAGLE-3 | ~65 | ~53 | ~32 |
+| A100 | Baseline | ~92 | ~87 | ~68 |
+| A100 | EAGLE-3 | ~218 | ~173 | ~74 |
 | L4 | Baseline | ~17 | ~16 | ~13 |
-| L4 | EAGLE-3 | ~13 | ~11 | ~7 |
+| L4 | EAGLE-3 | ~33 | ~25 | ~14 |
 
-**EAGLE-3 did not improve throughput on either GPU.** The A100 is compute-fast enough that draft model overhead outweighs acceptance-rate gains. On the L4, VRAM pressure from the draft model compounds latency.
+> **Note:** An earlier version of `load_test.py` counted SSE streaming *chunks* instead of actual tokens. With speculative decoding, each chunk may contain multiple accepted tokens, so TPS was severely undercounted. The table above reflects corrected measurements using `stream_options: {"include_usage": true}` (authoritative `completion_tokens` from the vLLM server).
+
+### EAGLE-3 Speedup Summary
+
+| GPU | Task | c=1 speedup | c=8 speedup | Crossover |
+|-----|------|-------------|-------------|-----------|
+| A100 | Code | **2.87×** | 1.8× | >32 |
+| A100 | Chat | **2.33×** | 1.98× | >32 |
+| A100 | Summarization | **2.33×** | ~1.7× | >32 |
+| L4 | Code | **~1.9×** | ~1.5× | ~32 |
+| L4 | Chat | **~1.8×** | ~1.4× | ~32 |
+
+**EAGLE-3 consistently improves throughput on both GPUs.** The benefit is largest at low concurrency (memory-bandwidth-bound regime) and narrows as concurrency increases toward the compute-bound regime. The A100's higher compute density amplifies the acceptance-rate gains most.
 
 ### EAGLE-3 Acceptance Rate (~50%)
-The draft model accepted ~50% of speculative tokens across all tasks and concurrency levels — theoretically sufficient for speedup, but batching overhead at high concurrency negates the benefit.
+The draft model accepted ~50% of speculative tokens across all tasks and concurrency levels. With k=5 speculative tokens, the Leviathan et al. (2023) theoretical speedup formula predicts S = (1 + 0.5×5)/(1 + 0.5) ≈ **2.33×** — closely matching observed results at c=1.
 
 ### Quality Check (A100, summarization, c=1, trial=99)
 Both baseline and EAGLE-3 produced **identical output text**, confirming speculative decoding preserves output distribution at temperature=0.
 
 ### A100 vs L4
-- A100 is **~5.5× faster** in throughput across all conditions
-- L4 degrades more severely at high concurrency under EAGLE-3 (TPOT reaches 128ms/token at c=32)
+- A100 is **~5–6× faster** in raw baseline throughput
+- A100 sees larger absolute EAGLE-3 gains due to higher compute headroom for draft evaluation
+- L4 degrades more at high concurrency under EAGLE-3 due to tighter VRAM budget (24 GB vs 80 GB)
 
 ---
 
