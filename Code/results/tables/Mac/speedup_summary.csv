@@ -1,0 +1,16 @@
+Baseline,Speculative,Task,Concurrency,Baseline_TPS,Speculative_TPS,Speedup
+mlx_baseline,mlx_spec,chat,1,19.98,28.04,1.403
+mlx_baseline,mlx_spec,chat,4,14.71,9.27,0.63
+mlx_baseline,mlx_spec,chat,8,9.37,7.09,0.756
+mlx_baseline,mlx_spec,chat,16,5.79,6.82,1.177
+mlx_baseline,mlx_spec,chat,32,5.8,6.84,1.179
+mlx_baseline,mlx_spec,code,1,18.14,27.68,1.526
+mlx_baseline,mlx_spec,code,4,13.2,11.95,0.905
+mlx_baseline,mlx_spec,code,8,8.93,9.49,1.063
+mlx_baseline,mlx_spec,code,16,5.47,9.49,1.734
+mlx_baseline,mlx_spec,code,32,5.5,10.03,1.824
+mlx_baseline,mlx_spec,summarization,1,14.03,16.65,1.186
+mlx_baseline,mlx_spec,summarization,4,12.93,8.68,0.671
+mlx_baseline,mlx_spec,summarization,8,7.24,7.29,1.007
+mlx_baseline,mlx_spec,summarization,16,5.56,6.2,1.114
+mlx_baseline,mlx_spec,summarization,32,5.05,7.61,1.507
