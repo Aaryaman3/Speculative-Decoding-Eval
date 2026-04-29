@@ -19,7 +19,6 @@ import aiohttp
 import pandas as pd
 import streamlit as st
 
-# ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="EAGLE-3 Benchmark Dashboard",
     page_icon="⚡",
@@ -35,36 +34,61 @@ GPU_HOURLY_RATES = {
     "mac":  0.00,
 }
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
 st.sidebar.title("⚡ EAGLE-3 Benchmark")
 mode = st.sidebar.radio("Mode", ["Live Demo", "Results Analysis"])
 
 # ── LIVE DEMO MODE ─────────────────────────────────────────────────────────────
 if mode == "Live Demo":
-    st.title("⚡ Live: Baseline vs EAGLE-3")
-    st.caption("Fires real requests to both servers simultaneously and shows latency metrics.")
+    st.title("⚡ Live: Greedy Baseline vs EAGLE-3 Speculative Decoding")
+    st.caption(
+        "Both servers receive the **same request** simultaneously. "
+        "EAGLE-3 uses a lightweight draft model to speculatively generate 5 tokens at once, "
+        "then the target model verifies them in a single forward pass — "
+        "reducing the number of sequential target-model calls."
+    )
 
-    # Server config
+    with st.expander("ℹ️ Metric glossary", expanded=False):
+        st.markdown(
+            "| Metric | Meaning | Who wins? |\n"
+            "|--------|---------|------------|\n"
+            "| **TTFT** | Time to First Token — how long until the first word appears | Lower is better |\n"
+            "| **TPOT** | Time Per Output Token — latency *between* each subsequent token | **Lower is better — this is the key speculative-decoding metric** |\n"
+            "| **Tokens/sec** | Total output tokens ÷ total wall time (includes TTFT) | Higher is better |\n"
+            "| **Acceptance rate** | % of draft tokens accepted by the target model without regeneration | Higher → more speedup |\n"
+            "| **Speedup** | EAGLE-3 TPOT ÷ Baseline TPOT (>1× = EAGLE-3 wins) | Higher is better |"
+        )
+
     st.sidebar.subheader("Server Config")
     baseline_url = st.sidebar.text_input("Baseline URL", "http://localhost:8000")
     eagle3_url   = st.sidebar.text_input("EAGLE-3 URL",  "http://localhost:8001")
-    gpu_type     = st.sidebar.selectbox("GPU Type", ["L4", "A100", "T4", "mac"])
+    gpu_type     = st.sidebar.selectbox("GPU Type", ["A100", "L4", "T4", "mac"])
 
-    # Request config
     st.sidebar.subheader("Request Config")
     task = st.sidebar.selectbox("Task", ["chat", "code", "summarization"])
-    concurrency = st.sidebar.select_slider("Concurrency", [1, 4, 8, 16, 32], value=4)
+    concurrency = st.sidebar.select_slider(
+        "Concurrency",
+        [1, 4, 8, 16, 32],
+        value=1,
+        help="Keep at 1 to see the clearest per-request speedup. "
+             "Increase to stress-test batching behavior.",
+    )
     max_tokens = st.sidebar.slider("Max output tokens", 64, 512, 256)
 
-    # Default prompts by task
     DEFAULT_PROMPTS = {
         "chat": "Explain the concept of recursion in simple terms.",
         "code": "Write a Python function that checks if a string is a palindrome.",
-        "summarization": "Summarize the following: The Apollo 11 mission was the first crewed lunar landing mission. Launched on July 16, 1969, it carried astronauts Neil Armstrong, Buzz Aldrin, and Michael Collins. Armstrong and Aldrin landed on the Moon on July 20, while Collins orbited above. Armstrong became the first person to walk on the Moon.",
+        "summarization": (
+            "Summarize the following: The Apollo 11 mission was the first crewed lunar landing mission. "
+            "Launched on July 16, 1969, it carried astronauts Neil Armstrong, Buzz Aldrin, and Michael Collins. "
+            "Armstrong and Aldrin landed on the Moon on July 20, while Collins orbited above. "
+            "Armstrong became the first person to walk on the Moon."
+        ),
     }
     prompt = st.text_area("Prompt", value=DEFAULT_PROMPTS[task], height=120)
 
-    async def send_one(session, url, model_name, prompt_text, gpu_type, system):
+    # ── async helpers ──────────────────────────────────────────────────────────
+
+    async def send_one(session, url, model_name, prompt_text, gpu_type_str):
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt_text}],
@@ -93,11 +117,9 @@ if mode == "Live Demo":
                         break
                     try:
                         chunk = json.loads(data)
-                        # Check for usage field in the final chunk
                         usage = chunk.get("usage")
                         if usage and "completion_tokens" in usage:
                             server_tokens = usage["completion_tokens"]
-                        # Guard against empty choices array in the usage-only chunk
                         choices = chunk.get("choices", [])
                         if not choices:
                             continue
@@ -110,84 +132,148 @@ if mode == "Live Demo":
                     except Exception:
                         continue
         except Exception as e:
-            return {"error": str(e), "ttft_ms": None, "tpot_ms": None, "tokens_per_sec": None, "cost_usd": None, "text": ""}
+            return {"error": str(e), "ttft_ms": None, "tpot_ms": None,
+                    "tokens_per_sec": None, "cost_usd": None, "text": ""}
 
         t_end = time.perf_counter()
         total = t_end - t_start
         tokens = server_tokens if server_tokens is not None else chunk_count
         ttft = (t_first - t_start) * 1000 if t_first else None
         tpot = ((t_end - t_first) / (tokens - 1) * 1000) if t_first and tokens > 1 else None
-        cost = GPU_HOURLY_RATES.get(gpu_type, 0) / 3600 * total
+        cost = GPU_HOURLY_RATES.get(gpu_type_str, 0) / 3600 * total
 
         return {
             "ttft_ms": round(ttft, 1) if ttft else None,
             "tpot_ms": round(tpot, 1) if tpot else None,
             "tokens_per_sec": round(tokens / total, 1) if total > 0 else None,
-            "cost_usd": cost,
             "output_tokens": tokens,
+            "cost_usd": cost,
             "text": text,
             "error": None,
         }
 
+    async def get_acceptance_rate(session, url):
+        """Pull acceptance rate from vLLM Prometheus /metrics endpoint."""
+        try:
+            async with session.get(f"{url}/metrics",
+                                   timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                for line in (await resp.text()).split("\n"):
+                    if "spec_decode_draft_acceptance_rate" in line and not line.startswith("#"):
+                        val = float(line.split()[-1])
+                        return val if val > 0 else None
+        except Exception:
+            pass
+        return None
+
     async def run_live_demo(prompt_text, concurrency_n):
-        # Fire concurrency_n copies of the same request to both servers
         prompts = [prompt_text] * concurrency_n
         connector = aiohttp.TCPConnector(limit=concurrency_n * 2 + 4)
         async with aiohttp.ClientSession(connector=connector) as session:
-            baseline_tasks = [send_one(session, baseline_url, "baseline", p, gpu_type, "baseline") for p in prompts]
-            eagle3_tasks   = [send_one(session, eagle3_url,  "eagle3",   p, gpu_type, "eagle3")   for p in prompts]
-            all_results = await asyncio.gather(*baseline_tasks, *eagle3_tasks)
+            baseline_tasks = [send_one(session, baseline_url, "baseline", p, gpu_type) for p in prompts]
+            eagle3_tasks   = [send_one(session, eagle3_url,  "eagle3",   p, gpu_type) for p in prompts]
+            all_results    = await asyncio.gather(*baseline_tasks, *eagle3_tasks)
+            acceptance     = await get_acceptance_rate(session, eagle3_url)
 
-        baseline_results = list(all_results[:concurrency_n])
-        eagle3_results   = list(all_results[concurrency_n:])
-        return baseline_results, eagle3_results
+        b_res = list(all_results[:concurrency_n])
+        e_res = list(all_results[concurrency_n:])
+        return b_res, e_res, acceptance
 
     def avg(lst, key):
         vals = [r[key] for r in lst if r.get(key) is not None]
         return sum(vals) / len(vals) if vals else None
 
-    if st.button("▶  Run Benchmark", type="primary"):
-        with st.spinner(f"Firing {concurrency} concurrent requests to both servers..."):
-            b_results, e_results = asyncio.run(run_live_demo(prompt, concurrency))
+    # ── Run button ─────────────────────────────────────────────────────────────
 
+    if st.button("▶  Run Benchmark", type="primary"):
+        with st.spinner(f"Firing {concurrency} concurrent request(s) to both servers…"):
+            b_results, e_results, acceptance_rate = asyncio.run(
+                run_live_demo(prompt, concurrency)
+            )
+
+        b_tpot = avg(b_results, "tpot_ms")
+        e_tpot = avg(e_results, "tpot_ms")
+        b_tps  = avg(b_results, "tokens_per_sec")
+        e_tps  = avg(e_results, "tokens_per_sec")
+
+        # ── Headline speedup banner ────────────────────────────────────────────
+        if b_tpot and e_tpot and b_tpot > 0:
+            tpot_speedup = b_tpot / e_tpot
+            tps_speedup  = (e_tps / b_tps) if (b_tps and e_tps) else None
+
+            if tpot_speedup >= 1.0:
+                st.success(
+                    f"⚡ EAGLE-3 is **{tpot_speedup:.2f}× faster** per token (TPOT)  "
+                    + (f"| **{tps_speedup:.2f}× overall throughput**" if tps_speedup else "")
+                    + (f"  | Draft acceptance rate: **{acceptance_rate:.0%}**" if acceptance_rate else "")
+                )
+            else:
+                st.warning(
+                    f"At concurrency={concurrency}, speculative decoding overhead outweighs gains "
+                    f"(TPOT ratio: {tpot_speedup:.2f}×). Try concurrency=1 for peak benefit."
+                )
+
+        # ── Side-by-side metrics ───────────────────────────────────────────────
         col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("Baseline (greedy)")
-            ttft  = avg(b_results, "ttft_ms")
-            tpot  = avg(b_results, "tpot_ms")
-            tps   = avg(b_results, "tokens_per_sec")
-            cost  = sum(r.get("cost_usd") or 0 for r in b_results)
-            st.metric("Avg TTFT",        f"{ttft:.0f} ms"   if ttft  else "N/A")
-            st.metric("Avg TPOT",        f"{tpot:.1f} ms"   if tpot  else "N/A")
-            st.metric("Avg Tokens/sec",  f"{tps:.1f}"       if tps   else "N/A")
-            st.metric("Total cost",      f"${cost:.6f}")
-            st.metric("Acceptance rate", "N/A (baseline)")
+            st.subheader("🔵 Baseline (greedy decoding)")
+            b_ttft = avg(b_results, "ttft_ms")
+            b_cost = sum(r.get("cost_usd") or 0 for r in b_results)
+            st.metric("TPOT — time per output token", f"{b_tpot:.1f} ms" if b_tpot else "N/A")
+            st.metric("Tokens / sec",                 f"{b_tps:.1f}"     if b_tps  else "N/A")
+            st.metric("TTFT — time to first token",   f"{b_ttft:.0f} ms" if b_ttft else "N/A")
+            st.metric("GPU cost (this run)",           f"${b_cost:.5f}")
+            st.metric("Acceptance rate",               "N/A (no draft model)")
             if b_results[0].get("text"):
-                st.text_area("Sample output", b_results[0]["text"][:400], height=150)
+                st.text_area("Sample output", b_results[0]["text"][:500], height=160,
+                             key="b_text")
 
         with col2:
-            st.subheader("EAGLE-3 (speculative)")
-            ttft  = avg(e_results, "ttft_ms")
-            tpot  = avg(e_results, "tpot_ms")
-            tps   = avg(e_results, "tokens_per_sec")
-            cost  = sum(r.get("cost_usd") or 0 for r in e_results)
-            st.metric("Avg TTFT",        f"{ttft:.0f} ms"   if ttft  else "N/A")
-            st.metric("Avg TPOT",        f"{tpot:.1f} ms"   if tpot  else "N/A")
-            st.metric("Avg Tokens/sec",  f"{tps:.1f}"       if tps   else "N/A")
-            st.metric("Total cost",      f"${cost:.6f}")
-            st.metric("Acceptance rate", "see /metrics")
+            st.subheader("🔴 EAGLE-3 (speculative decoding, k=5)")
+            e_ttft = avg(e_results, "ttft_ms")
+            e_cost = sum(r.get("cost_usd") or 0 for r in e_results)
+
+            tpot_delta = f"{b_tpot - e_tpot:+.1f} ms" if (b_tpot and e_tpot) else None
+            tps_delta  = f"{e_tps - b_tps:+.1f} tok/s" if (b_tps and e_tps) else None
+            ttft_delta = f"{avg(b_results,'ttft_ms') - e_ttft:+.0f} ms" if (b_ttft and e_ttft) else None
+
+            st.metric("TPOT — time per output token",
+                      f"{e_tpot:.1f} ms" if e_tpot else "N/A",
+                      delta=tpot_delta, delta_color="inverse")
+            st.metric("Tokens / sec",
+                      f"{e_tps:.1f}" if e_tps else "N/A",
+                      delta=tps_delta)
+            st.metric("TTFT — time to first token",
+                      f"{e_ttft:.0f} ms" if e_ttft else "N/A",
+                      delta=ttft_delta, delta_color="inverse")
+            st.metric("GPU cost (this run)", f"${e_cost:.5f}")
+            st.metric("Draft acceptance rate",
+                      f"{acceptance_rate:.1%}" if acceptance_rate else "see /metrics")
             if e_results[0].get("text"):
-                st.text_area("Sample output", e_results[0]["text"][:400], height=150)
+                st.text_area("Sample output", e_results[0]["text"][:500], height=160,
+                             key="e_text")
 
         errors = [r for r in b_results + e_results if r.get("error")]
         if errors:
             st.error(f"{len(errors)} request(s) failed: {errors[0]['error']}")
 
+        with st.expander("How to read these results"):
+            st.markdown(
+                "**TPOT is the key metric for speculative decoding.** "
+                "It measures how fast tokens stream to the user *after* the first one. "
+                "Lower TPOT = faster perceived generation.\n\n"
+                "**Why might TTFT be higher for EAGLE-3?** "
+                "The draft model needs to set up its KV cache on the first request. "
+                "At low concurrency (c=1) after warmup, TTFT converges.\n\n"
+                "**Why does speedup shrink at high concurrency?** "
+                "At c≥8 the GPU is compute-bound and the overhead of running the draft model "
+                "starts to outweigh the verification savings."
+            )
+
 
 # ── RESULTS ANALYSIS MODE ──────────────────────────────────────────────────────
 else:
-    st.title("Results Analysis")
+    st.title("Results Analysis — Full Sweep Data")
 
     import matplotlib.pyplot as plt
     import seaborn as sns
@@ -214,14 +300,16 @@ else:
         df = load_results()
         st.success(f"Loaded {len(df)} request records from {RESULTS_DIR}")
 
-        # Filters
         col1, col2, col3 = st.columns(3)
         with col1:
-            gpu_filter = st.multiselect("GPU Type", df["gpu_type"].unique().tolist(), default=df["gpu_type"].unique().tolist())
+            gpu_filter = st.multiselect("GPU Type", df["gpu_type"].unique().tolist(),
+                                        default=df["gpu_type"].unique().tolist())
         with col2:
-            task_filter = st.multiselect("Task", df["task"].unique().tolist(), default=df["task"].unique().tolist())
+            task_filter = st.multiselect("Task", df["task"].unique().tolist(),
+                                         default=df["task"].unique().tolist())
         with col3:
-            system_filter = st.multiselect("System", df["system"].unique().tolist(), default=df["system"].unique().tolist())
+            system_filter = st.multiselect("System", df["system"].unique().tolist(),
+                                           default=df["system"].unique().tolist())
 
         df_filtered = df[
             df["gpu_type"].isin(gpu_filter) &
@@ -233,19 +321,16 @@ else:
             ["ttft_ms", "tpot_ms", "tokens_per_sec", "gpu_cost_usd"]
         ].mean().reset_index()
 
-        # ── TTFT plot ──────────────────────────────────────────
         st.subheader("Time to First Token vs Concurrency")
         for gpu in agg["gpu_type"].unique():
             for task in agg["task"].unique():
                 subset = agg[(agg["gpu_type"] == gpu) & (agg["task"] == task)]
                 if subset.empty:
                     continue
-
                 fig, ax = plt.subplots(figsize=(7, 4))
                 for system, grp in subset.groupby("system"):
                     grp = grp.sort_values("concurrency")
                     ax.plot(grp["concurrency"], grp["ttft_ms"], marker="o", label=system, linewidth=2)
-
                 ax.set_title(f"TTFT — {task} on {gpu}")
                 ax.set_xlabel("Concurrent Requests")
                 ax.set_ylabel("TTFT (ms)")
@@ -254,19 +339,16 @@ else:
                 st.pyplot(fig)
                 plt.close(fig)
 
-        # ── Throughput plot ─────────────────────────────────────
         st.subheader("Throughput vs Concurrency")
         for gpu in agg["gpu_type"].unique():
             for task in agg["task"].unique():
                 subset = agg[(agg["gpu_type"] == gpu) & (agg["task"] == task)]
                 if subset.empty:
                     continue
-
                 fig, ax = plt.subplots(figsize=(7, 4))
                 for system, grp in subset.groupby("system"):
                     grp = grp.sort_values("concurrency")
                     ax.plot(grp["concurrency"], grp["tokens_per_sec"], marker="s", label=system, linewidth=2)
-
                 ax.set_title(f"Tokens/sec — {task} on {gpu}")
                 ax.set_xlabel("Concurrent Requests")
                 ax.set_ylabel("Tokens / Second")
@@ -275,14 +357,12 @@ else:
                 st.pyplot(fig)
                 plt.close(fig)
 
-        # ── Raw data table ──────────────────────────────────────
         with st.expander("Raw aggregated data"):
             st.dataframe(agg)
 
-        # ── Cost table ──────────────────────────────────────────
         st.subheader("Cost Analysis")
-        df_filtered_cost = df_filtered[df_filtered["output_tokens"] > 0].copy()
-        df_filtered_cost["cost_per_token_usd"] = df_filtered_cost["gpu_cost_usd"] / df_filtered_cost["output_tokens"]
-        cost_table = df_filtered_cost.groupby(["system", "gpu_type"])["cost_per_token_usd"].mean().reset_index()
+        df_cost = df_filtered[df_filtered["output_tokens"] > 0].copy()
+        df_cost["cost_per_token_usd"] = df_cost["gpu_cost_usd"] / df_cost["output_tokens"]
+        cost_table = df_cost.groupby(["system", "gpu_type"])["cost_per_token_usd"].mean().reset_index()
         cost_table["cost_per_1k_tokens_usd"] = cost_table["cost_per_token_usd"] * 1000
         st.dataframe(cost_table[["system", "gpu_type", "cost_per_1k_tokens_usd"]].round(6))
