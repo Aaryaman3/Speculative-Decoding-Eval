@@ -380,11 +380,17 @@ if mode == "Live Demo":
                 except queue.Empty:
                     pass
 
+            # Estimate tokens from actual text (accurate for both, ignores SSE chunk size)
+            b_est_tok = len(b_text) // 4
+            e_est_tok = len(e_text) // 4
+
             # Update UI
-            b_counter.metric("Tokens generated", b_tokens,
-                              delta=f"{b_tokens / b_elapsed:.0f} tok/s" if b_elapsed > 0 else None)
-            e_counter.metric("Tokens generated", e_tokens,
-                              delta=f"{e_tokens / e_elapsed:.0f} tok/s" if e_elapsed > 0 else None)
+            b_counter.metric("~Tokens generated",
+                              b_est_tok,
+                              delta=f"{b_est_tok / b_elapsed:.0f} tok/s" if b_elapsed > 0 else None)
+            e_counter.metric("~Tokens generated",
+                              e_est_tok,
+                              delta=f"{e_est_tok / e_elapsed:.0f} tok/s" if e_elapsed > 0 else None)
             b_output.markdown(
                 f"<div style='background:#f0f4ff;padding:12px;border-radius:8px;"
                 f"font-size:14px;min-height:120px;white-space:pre-wrap'>{b_text}</div>",
