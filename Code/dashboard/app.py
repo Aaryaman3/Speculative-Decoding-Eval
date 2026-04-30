@@ -179,10 +179,11 @@ if mode == "Live Demo":
             "max_tokens": max_tokens,
             "temperature": 0,
             "stream": True,
+            "stream_options": {"include_usage": True},  # get authoritative token count at end
         }
         t_start = time.perf_counter()
         t_first = None
-        token_count = 0
+        server_tokens = None  # from usage field — correct for speculative decoding
         text = ""
         try:
             with req.post(f"{url}/v1/chat/completions", json=payload,
@@ -198,6 +199,10 @@ if mode == "Live Demo":
                         break
                     try:
                         chunk = json.loads(data)
+                        # Capture server-reported token count (final chunk only)
+                        usage = chunk.get("usage")
+                        if usage and "completion_tokens" in usage:
+                            server_tokens = usage["completion_tokens"]
                         choices = chunk.get("choices", [])
                         if not choices:
                             continue
@@ -207,8 +212,7 @@ if mode == "Live Demo":
                             if t_first is None:
                                 t_first = now
                             text += content
-                            token_count += 1
-                            q.put(("token", content, token_count, now - t_start))
+                            q.put(("token", content, now - t_start))
                     except Exception:
                         continue
         except Exception as e:
@@ -216,9 +220,11 @@ if mode == "Live Demo":
             return
 
         total_time = time.perf_counter() - t_start
-        tpot = ((time.perf_counter() - t_first) / (token_count - 1) * 1000) if t_first and token_count > 1 else None
+        # Use server-reported token count so TPOT is per-actual-token, not per-SSE-chunk
+        tokens = server_tokens if server_tokens else max(len(text) // 4, 1)
+        tpot = ((time.perf_counter() - t_first) / (tokens - 1) * 1000) if t_first and tokens > 1 else None
         ttft = (t_first - t_start) * 1000 if t_first else None
-        q.put(("done", text, token_count, total_time, ttft, tpot))
+        q.put(("done", text, tokens, total_time, ttft, tpot))
 
     # ── BUTTON 1: Metrics benchmark ────────────────────────────────────────────
     col_btn1, col_btn2 = st.columns([1, 1])
@@ -353,7 +359,7 @@ if mode == "Live Demo":
                 try:
                     ev = b_q.get_nowait()
                     if ev[0] == "token":
-                        _, content, b_tokens, b_elapsed = ev
+                        _, content, b_elapsed = ev
                         b_text += content
                     elif ev[0] == "done":
                         _, _, b_tokens, b_elapsed, b_ttft_live, b_tpot_live = ev
@@ -370,7 +376,7 @@ if mode == "Live Demo":
                 try:
                     ev = e_q.get_nowait()
                     if ev[0] == "token":
-                        _, content, e_tokens, e_elapsed = ev
+                        _, content, e_elapsed = ev
                         e_text += content
                     elif ev[0] == "done":
                         _, _, e_tokens, e_elapsed, e_ttft_live, e_tpot_live = ev
