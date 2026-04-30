@@ -81,12 +81,19 @@ if mode == "Live Demo":
     # ── helpers ────────────────────────────────────────────────────────────────
 
     def get_acceptance_rate(url: str) -> float | None:
+        """Compute acceptance rate from vLLM counters (vLLM v0.20 removed the pre-computed metric)."""
         try:
             r = req.get(f"{url}/metrics", timeout=4)
+            accepted, drafted = None, None
             for line in r.text.split("\n"):
-                if "spec_decode_draft_acceptance_rate" in line and not line.startswith("#"):
-                    val = float(line.split()[-1])
-                    return val if val > 0 else None
+                if line.startswith("#"):
+                    continue
+                if "spec_decode_num_accepted_tokens_total{" in line:
+                    accepted = float(line.split()[-1])
+                elif "spec_decode_num_draft_tokens_total{" in line:
+                    drafted = float(line.split()[-1])
+            if accepted is not None and drafted and drafted > 0:
+                return accepted / drafted
         except Exception:
             pass
         return None
