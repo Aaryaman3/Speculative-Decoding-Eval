@@ -30,10 +30,13 @@ def load_data(results_dir):
     for f in files:
         if "_t99.jsonl" in f:
             continue
-        with open(f, 'r') as file:
-            for line in file:
-                if line.strip():
-                    records.append(json.loads(line))
+        try:
+            with open(f, 'r', encoding='utf-8') as file:
+                for line in file:
+                    if line.strip():
+                        records.append(json.loads(line))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            print(f"  ⚠ Skipping corrupted file: {os.path.basename(f)} ({e})")
     return pd.DataFrame(records)
 
 def main():
