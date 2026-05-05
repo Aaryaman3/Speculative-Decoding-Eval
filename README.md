@@ -50,11 +50,11 @@ Report & Presentation/
 ## Benchmark Design
 
 - **Tasks:** Chat (ShareGPT), Code (HumanEval), Summarization (CNN/DailyMail)
-- **Concurrency levels:** 1, 4, 8, 16, 32
+- **Concurrency levels:** 1, 4, 8, 16, 32, 64, 128 (A100); 1, 4, 8, 16, 32 (L4 / Mac)
 - **Trials per cell:** 3
 - **Max output tokens:** 256
 - **Temperature:** 0 (greedy, deterministic)
-- **Total result files:** 180 sweep files + 2 quality files for A100/L4, plus complete Mac metric summaries.
+- **Total result files:** 216 sweep files + 2 quality files for A100/L4, plus complete Mac metric summaries.
 
 ---
 
@@ -62,31 +62,31 @@ Report & Presentation/
 
 ### Throughput (tokens/sec)
 
-| GPU / Device | System   | c=1  | c=8  | c=32 |
-| ------------ | -------- | ---- | ---- | ---- |
-| A100         | Baseline | ~92  | ~87  | ~68  |
-| A100         | EAGLE-3  | ~218 | ~173 | ~74  |
-| L4           | Baseline | ~17  | ~16  | ~13  |
-| L4           | EAGLE-3  | ~33  | ~25  | ~14  |
-| Mac M-Series | Baseline | ~17  | ~8.5 | ~5.4 |
-| Mac M-Series | MLX Spec | ~24  | ~8.0 | ~8.1 |
+| GPU / Device | System   | c=1  | c=8  | c=32 | c=64 | c=128 |
+| ------------ | -------- | ---- | ---- | ---- | ---- | ----- |
+| A100         | Baseline | ~92  | ~87  | ~68  | ~57  | ~62   |
+| A100         | EAGLE-3  | ~218 | ~173 | ~74  | ~74  | ~86   |
+| L4           | Baseline | ~17  | ~16  | ~13  | —    | —     |
+| L4           | EAGLE-3  | ~33  | ~25  | ~14  | —    | —     |
+| Mac M-Series | Baseline | ~17  | ~8.5 | ~5.4 | —    | —     |
+| Mac M-Series | MLX Spec | ~24  | ~8.0 | ~8.1 | —    | —     |
 
 > **Note:** An earlier version of `load_test.py` counted SSE streaming _chunks_ instead of actual tokens. With speculative decoding, each chunk may contain multiple accepted tokens, so TPS was severely undercounted. The table above reflects corrected measurements using `stream_options: {"include_usage": true}` (authoritative `completion_tokens` from the vLLM server).
 
 ### EAGLE-3 Speedup Summary
 
-| GPU / Device | Task          | c=1 speedup | c=8 speedup        | Crossover  |
-| ------------ | ------------- | ----------- | ------------------ | ---------- |
-| A100         | Code          | **2.87×**   | 1.8×               | >32 (None) |
-| A100         | Chat          | **2.33×**   | 1.98×              | >32 (None) |
-| A100         | Summarization | **2.33×**   | ~1.7×              | >32 (None) |
-| L4           | Code          | **~1.9×**   | ~1.5×              | ~32 (None) |
-| L4           | Chat          | **~1.8×**   | ~1.4×              | ~32 (None) |
-| Mac M-Series | Code          | **1.53×**   | 1.06×              | c=4        |
-| Mac M-Series | Chat          | **1.40×**   | 0.76× (Regression) | c=4        |
-| Mac M-Series | Summarization | **1.19×**   | 1.01×              | c=4        |
+| GPU / Device | Task          | c=1 speedup | c=8 speedup        | c=64 speedup | c=128 speedup | Crossover    |
+| ------------ | ------------- | ----------- | ------------------ | ------------ | ------------- | ------------ |
+| A100         | Code          | **2.87×**   | 1.8×               | **1.55×**    | **1.57×**     | >128 (none)  |
+| A100         | Chat          | **2.33×**   | 1.98×              | **1.18×**    | **1.38×**     | >128 (none)  |
+| A100         | Summarization | **2.33×**   | ~1.7×              | **1.11×**    | **1.16×**     | >128 (none)  |
+| L4           | Code          | **~1.9×**   | ~1.5×              | —            | —             | ~32          |
+| L4           | Chat          | **~1.8×**   | ~1.4×              | —            | —             | ~32          |
+| Mac M-Series | Code          | **1.53×**   | 1.06×              | —            | —             | c=4          |
+| Mac M-Series | Chat          | **1.40×**   | 0.76× (Regression) | —            | —             | c=4          |
+| Mac M-Series | Summarization | **1.19×**   | 1.01×              | —            | —             | c=4          |
 
-**EAGLE-3 consistently improves throughput on both GPUs.** The benefit is largest at low concurrency (memory-bandwidth-bound regime) and narrows as concurrency increases toward the compute-bound regime. The A100's higher compute density amplifies the acceptance-rate gains most.
+**EAGLE-3 consistently improves throughput on the A100 across the full tested range (c=1 to c=128) — no crossover point was found.** The speedup narrows at mid-range concurrency (c=32) but recovers at c=64–128 as the GPU's compute saturation actually benefits speculative decoding's batched verification step. The benefit is largest at low concurrency (memory-bandwidth-bound regime). On L4, the crossover occurs around c=32 due to tighter VRAM. Mac MLX crossover hits at c=4.
 
 ### EAGLE-3 Acceptance Rate (~50%)
 
