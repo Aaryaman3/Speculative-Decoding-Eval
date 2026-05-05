@@ -23,7 +23,7 @@ set -e
 GPU_TYPE=${1:?"\nUsage: bash benchmark/run_experiment.sh <GPU_TYPE>\n  Options: L4 | A100 | mac"}
 
 N_SAMPLES=50
-CONCURRENCIES=(1 4 8 16 32)
+CONCURRENCIES=(1 4 8 16 32 64 128)
 TASKS=("chat" "code" "summarization")
 TRIALS=3
 BASELINE_PORT=8000

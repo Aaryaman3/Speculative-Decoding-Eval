@@ -336,7 +336,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-type", choices=["T4", "L4", "A100", "mac"], required=True)
     parser.add_argument("--task", choices=["chat", "code", "summarization"], required=True)
     parser.add_argument("--prompts-file", required=True, help="Path to .jsonl prompts file")
-    parser.add_argument("--concurrency", type=int, required=True, choices=[1, 4, 8, 16, 32])
+    parser.add_argument("--concurrency", type=int, required=True, choices=[1, 4, 8, 16, 32, 64, 128])
     parser.add_argument("--trial", type=int, default=1)
     return parser.parse_args()
 

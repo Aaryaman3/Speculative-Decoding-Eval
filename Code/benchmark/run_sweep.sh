@@ -22,7 +22,7 @@ SERVER_URL=${3:?}
 N_SAMPLES=50
 TRIALS=3
 
-CONCURRENCIES=(1 4 8 16 32)
+CONCURRENCIES=(1 4 8 16 32 64 128)
 TASKS=("chat" "code" "summarization")
 
 echo "========================================"
