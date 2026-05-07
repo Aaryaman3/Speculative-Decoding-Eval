@@ -50,11 +50,11 @@ Report & Presentation/
 ## Benchmark Design
 
 - **Tasks:** Chat (ShareGPT), Code (HumanEval), Summarization (CNN/DailyMail)
-- **Concurrency levels:** 1, 4, 8, 16, 32, 64, 128 (A100); 1, 4, 8, 16, 32 (L4 / Mac)
+- **Concurrency levels:** 1, 4, 8, 16, 32, 64, 128 (A100 and L4); 1, 4, 8, 16, 32 (Mac)
 - **Trials per cell:** 3
 - **Max output tokens:** 256
 - **Temperature:** 0 (greedy, deterministic)
-- **Total result files:** 216 sweep files + 2 quality files for A100/L4, plus complete Mac metric summaries.
+- **Total result files:** 252 sweep files + 2 quality files for A100/L4, plus complete Mac metric summaries.
 
 ---
 
@@ -66,8 +66,8 @@ Report & Presentation/
 | ------------ | -------- | ---- | ---- | ---- | ---- | ----- |
 | A100         | Baseline | ~92  | ~88  | ~73  | ~55  | ~62   |
 | A100         | EAGLE-3  | ~205 | ~180 | ~114 | ~85  | ~85   |
-| L4           | Baseline | ~17  | ~16  | ~13  | —    | —     |
-| L4           | EAGLE-3  | ~33  | ~25  | ~14  | —    | —     |
+| L4           | Baseline | ~17  | ~16  | ~14  | ~12  | ~10   |
+| L4           | EAGLE-3  | ~38  | ~38  | ~26  | ~17  | ~12   |
 | Mac M-Series | Baseline | ~17  | ~8.5 | ~5.4 | —    | —     |
 | Mac M-Series | MLX Spec | ~24  | ~8.0 | ~8.1 | —    | —     |
 
@@ -75,16 +75,17 @@ Report & Presentation/
 
 ### EAGLE-3 Speedup Summary
 
-| GPU / Device | Task          | c=1 speedup | c=8 speedup        | c=64 speedup | c=128 speedup | Crossover    |
-| ------------ | ------------- | ----------- | ------------------ | ------------ | ------------- | ------------ |
-| A100         | Code          | **2.86×**   | 2.37×              | **1.58×**    | **1.58×**     | >128 (none)  |
-| A100         | Chat          | **1.49×**   | 1.94×              | **1.32×**    | **1.32×**     | >128 (none)  |
-| A100         | Summarization | **2.35×**   | 1.80×              | **1.87×**    | **1.17×**     | >128 (none)  |
-| L4           | Code          | **~1.9×**   | ~1.5×              | —            | —             | ~32          |
-| L4           | Chat          | **~1.8×**   | ~1.4×              | —            | —             | ~32          |
-| Mac M-Series | Code          | **1.53×**   | 1.06×              | —            | —             | c=4          |
-| Mac M-Series | Chat          | **1.40×**   | 0.76× (Regression) | —            | —             | c=4          |
-| Mac M-Series | Summarization | **1.19×**   | 1.01×              | —            | —             | c=4          |
+| GPU / Device | Task          | c=1 speedup | c=8 speedup        | c=64 speedup | c=128 speedup | Crossover         |
+| ------------ | ------------- | ----------- | ------------------ | ------------ | ------------- | ----------------- |
+| A100         | Code          | **2.86×**   | 2.37×              | **1.58×**    | **1.58×**     | >128 (none)       |
+| A100         | Chat          | **1.49×**   | 1.94×              | **1.32×**    | **1.32×**     | >128 (none)       |
+| A100         | Summarization | **2.35×**   | 1.80×              | **1.87×**    | **1.17×**     | >128 (none)       |
+| L4           | Code          | **2.88×**   | 2.77×              | **1.69×**    | **1.42×**     | >128 (none)       |
+| L4           | Chat          | **1.53×**   | 2.18×              | **1.50×**    | **1.27×**     | >128 (none)       |
+| L4           | Summarization | **2.41×**   | 2.17×              | **1.25×**    | **~1.04×**    | ~128 (near parity)|
+| Mac M-Series | Code          | **1.53×**   | 1.06×              | —            | —             | c=4               |
+| Mac M-Series | Chat          | **1.40×**   | 0.76× (Regression) | —            | —             | c=4               |
+| Mac M-Series | Summarization | **1.19×**   | 1.01×              | —            | —             | c=4               |
 
 **EAGLE-3 consistently improves throughput on the A100 across the full tested range (c=1 to c=128) — no crossover point was found.** Speedup is task-dependent: code generation benefits most (up to 2.86× at c=1), while chat gains are more modest (1.49× at c=1, likely due to lower draft acceptance on diverse conversational prompts). At high concurrency the advantage narrows but remains positive across all tasks. On L4, the crossover occurs around c=32 due to tighter VRAM. Mac MLX crossover hits at c=4.
 
@@ -99,7 +100,7 @@ Both baseline and EAGLE-3 produced **identical output text**, confirming specula
 ### Hardware Comparison: A100 vs L4 vs Mac (Apple Silicon)
 
 - **A100 (80GB)**: The high compute density and massive memory bandwidth makes it the absolute winner. It offers ~5–6× faster raw baseline throughput than the L4. It sees the largest absolute EAGLE-3 gains because it has the compute headroom to evaluate the draft model without bottlenecking the target model.
-- **L4 (24GB)**: The budget option. It degrades more at high concurrency under EAGLE-3 due to its tighter VRAM budget (24 GB vs 80 GB), but speculative decoding is still universally beneficial and saves ~50% in cost.
+- **L4 (24GB)**: The budget option. EAGLE-3 speedup holds across the full tested range (c=1 to c=128) for code and chat, with summarization reaching near-parity (~1.04×) at c=128. Speedup narrows more steeply than on the A100 due to tighter VRAM (24 GB vs 80 GB), but speculative decoding is still beneficial at all tested concurrency levels.
 - **Mac (Unified Memory)**: The edge/local option. Standard MLX speculative decoding is beneficial **only for a single user (c=1)**, offering up to a 1.53× speedup. At higher concurrency (c≥4), it suffers catastrophic regressions. For instance, Chat at c=32 sees TTFT skyrocket to over 24 seconds with extreme variance, making it completely unsuitable for multi-user server deployment.
 
 ---
