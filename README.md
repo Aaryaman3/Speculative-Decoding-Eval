@@ -30,11 +30,11 @@ Report & Presentation/
 
 ## Hardware
 
-| GPU / Device          | Memory         | Role                                                  |
-| --------------------- | -------------- | ----------------------------------------------------- |
-| NVIDIA A100-SXM4-80GB | 80 GB VRAM     | Aaryaman — both servers fit simultaneously            |
-| NVIDIA L4             | 24 GB VRAM     | Himanshu — servers run sequentially                   |
-| Apple M-Series        | Unified Memory | Shreya & Raj — MLX baseline vs standard spec decoding |
+| GPU / Device          | Memory         | Role                                                   |
+| --------------------- | -------------- | ------------------------------------------------------ |
+| NVIDIA A100-SXM4-80GB | 80 GB VRAM     | Aaryaman — both servers fit simultaneously             |
+| NVIDIA L4             | 24 GB VRAM     | Himanshu — servers run sequentially                    |
+| Apple M-Series        | Unified Memory | Shreya & Raj — MLX baseline vs standard spec decoding  |
 
 ---
 
@@ -64,8 +64,8 @@ Report & Presentation/
 
 | GPU / Device | System   | c=1  | c=8  | c=32 | c=64 | c=128 |
 | ------------ | -------- | ---- | ---- | ---- | ---- | ----- |
-| A100         | Baseline | ~92  | ~87  | ~68  | ~57  | ~62   |
-| A100         | EAGLE-3  | ~218 | ~173 | ~74  | ~74  | ~86   |
+| A100         | Baseline | ~92  | ~88  | ~73  | ~55  | ~62   |
+| A100         | EAGLE-3  | ~205 | ~180 | ~114 | ~85  | ~85   |
 | L4           | Baseline | ~17  | ~16  | ~13  | —    | —     |
 | L4           | EAGLE-3  | ~33  | ~25  | ~14  | —    | —     |
 | Mac M-Series | Baseline | ~17  | ~8.5 | ~5.4 | —    | —     |
@@ -77,20 +77,20 @@ Report & Presentation/
 
 | GPU / Device | Task          | c=1 speedup | c=8 speedup        | c=64 speedup | c=128 speedup | Crossover    |
 | ------------ | ------------- | ----------- | ------------------ | ------------ | ------------- | ------------ |
-| A100         | Code          | **2.87×**   | 1.8×               | **1.55×**    | **1.57×**     | >128 (none)  |
-| A100         | Chat          | **2.33×**   | 1.98×              | **1.18×**    | **1.38×**     | >128 (none)  |
-| A100         | Summarization | **2.33×**   | ~1.7×              | **1.11×**    | **1.16×**     | >128 (none)  |
+| A100         | Code          | **2.86×**   | 2.37×              | **1.58×**    | **1.58×**     | >128 (none)  |
+| A100         | Chat          | **1.49×**   | 1.94×              | **1.32×**    | **1.32×**     | >128 (none)  |
+| A100         | Summarization | **2.35×**   | 1.80×              | **1.87×**    | **1.17×**     | >128 (none)  |
 | L4           | Code          | **~1.9×**   | ~1.5×              | —            | —             | ~32          |
 | L4           | Chat          | **~1.8×**   | ~1.4×              | —            | —             | ~32          |
 | Mac M-Series | Code          | **1.53×**   | 1.06×              | —            | —             | c=4          |
 | Mac M-Series | Chat          | **1.40×**   | 0.76× (Regression) | —            | —             | c=4          |
 | Mac M-Series | Summarization | **1.19×**   | 1.01×              | —            | —             | c=4          |
 
-**EAGLE-3 consistently improves throughput on the A100 across the full tested range (c=1 to c=128) — no crossover point was found.** The speedup narrows at mid-range concurrency (c=32) but recovers at c=64–128 as the GPU's compute saturation actually benefits speculative decoding's batched verification step. The benefit is largest at low concurrency (memory-bandwidth-bound regime). On L4, the crossover occurs around c=32 due to tighter VRAM. Mac MLX crossover hits at c=4.
+**EAGLE-3 consistently improves throughput on the A100 across the full tested range (c=1 to c=128) — no crossover point was found.** Speedup is task-dependent: code generation benefits most (up to 2.86× at c=1), while chat gains are more modest (1.49× at c=1, likely due to lower draft acceptance on diverse conversational prompts). At high concurrency the advantage narrows but remains positive across all tasks. On L4, the crossover occurs around c=32 due to tighter VRAM. Mac MLX crossover hits at c=4.
 
 ### EAGLE-3 Acceptance Rate (~50%)
 
-The draft model accepted ~50% of speculative tokens across all tasks and concurrency levels. With k=5 speculative tokens, the Leviathan et al. (2023) theoretical speedup formula predicts S = (1 + 0.5×5)/(1 + 0.5) ≈ **2.33×** — closely matching observed results at c=1.
+The draft model accepted ~50% of speculative tokens across all tasks and concurrency levels. With k=5 speculative tokens, the Leviathan et al. (2023) theoretical speedup formula predicts S = (1 + 0.5×5)/(1 + 0.5) ≈ **2.33×** — closely matching observed results for code (2.86×) and summarization (2.35×) at c=1. Chat shows a lower c=1 speedup (~1.49×), consistent with a lower effective acceptance rate on diverse conversational prompts.
 
 ### Quality Check (A100, summarization, c=1, trial=99)
 
