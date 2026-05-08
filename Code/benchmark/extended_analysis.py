@@ -3,12 +3,13 @@ Extended analysis: speedup ratios, acceptance rate breakdown,
 theoretical vs actual speedup, ROUGE quality scores, cost per 1k tokens.
 
 Run from the project root:
-    python3 benchmark/extended_analysis.py
+    python3 Code/benchmark/extended_analysis.py
 """
 
 import json
 import glob
 import warnings
+import os
 from pathlib import Path
 from collections import defaultdict
 
@@ -22,17 +23,20 @@ import seaborn as sns
 
 warnings.filterwarnings("ignore")
 
-RESULTS_DIR  = Path("results/raw")
-PLOTS_DIR    = Path("results/plots")
-TABLES_DIR   = Path("results/tables")
-PROMPTS_DIR  = Path("data/prompts")
+# Calculate base directory (up from Code/benchmark/)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESULTS_DIR  = Path(os.path.join(CODE_DIR, "results", "raw"))
+PLOTS_DIR    = Path(os.path.join(CODE_DIR, "results", "plots"))
+TABLES_DIR   = Path(os.path.join(CODE_DIR, "results", "tables"))
+PROMPTS_DIR  = Path(os.path.join(CODE_DIR, "data", "prompts"))
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
 
 PALETTE = {"baseline": "#2196F3", "eagle3": "#FF5722"}
 TASKS   = ["chat", "code", "summarization"]
 GPUS    = ["A100", "L4"]
-CONCS   = [1, 4, 8, 16, 32]
+CONCS   = [1, 4, 8, 16, 32, 64, 128]
 NUM_SPEC_TOKENS = 5  # --num_speculative_tokens used in startup_eagle3.sh
 
 
@@ -46,7 +50,7 @@ def load_data() -> pd.DataFrame:
                 rows.append(json.loads(line))
     df = pd.DataFrame(rows)
     df = df[df["error"].isna()] if "error" in df.columns else df
-    df = df[df["ttft_ms"].notna() & df["tokens_per_sec"].notna()]
+    df = df[(df["ttft_ms"].notna()) & (df["tokens_per_sec"].notna())]
     return df
 
 
